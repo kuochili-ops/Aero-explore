@@ -1,97 +1,89 @@
 import streamlit as st
 import requests
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# --- 基本配置 ---
+# --- 配置 ---
 st.set_page_config(page_title="White 6 Aero Explorer", page_icon="𓃥", layout="wide")
 
-# 安全讀取金鑰
-if "RAPIDAPI_KEY" not in st.secrets:
-    st.error("請在 Streamlit Secrets 中設定 RAPIDAPI_KEY")
-    st.stop()
+# 安全讀取金鑰 (請在 Secrets 加入這些 Key)
+RAPID_API_KEY = st.secrets.get("RAPIDAPI_KEY")
+AMADEUS_KEY = st.secrets.get("AMADEUS_KEY") # 備援方案
+AMADEUS_SECRET = st.secrets.get("AMADEUS_SECRET")
 
-RAPID_API_KEY = st.secrets["RAPIDAPI_KEY"]
 HOST = "skyscanner-flights-travel-api.p.rapidapi.com"
 headers = {"X-RapidAPI-Key": RAPID_API_KEY, "X-RapidAPI-Host": HOST}
 
-# --- 1. 智慧地點搜尋函式 ---
-def search_location(query):
-    """
-    輸入城市名或代碼，自動回傳 Skyscanner 內部的 entityId
-    """
+# --- 1. 智慧地點提示 (優化頻率) ---
+def get_location_suggestions(query):
+    if len(query) < 2: return []
     url = f"https://{HOST}/v1/flights/search-location"
     params = {"q": query, "locale": "zh-TW"}
     try:
+        # 僅在特定動作觸發，減少 Auto-request
         res = requests.get(url, headers=headers, params=params).json()
-        if res.get('status') and res.get('data'):
-            return res['data']
+        return res.get('data', [])
     except:
-        pass
-    return []
+        return []
 
-# --- 2. 機票搜尋函式 ---
-def fetch_flight(from_id, to_id, date_obj):
+# --- 2. 核心搜尋與頻率控制 ---
+def fetch_flight_safe(from_id, to_id, date_obj):
     url = f"https://{HOST}/v1/flights/search-onedate"
     params = {
-        "fromEntityId": from_id,
-        "toEntityId": to_id,
+        "fromEntityId": from_id, "toEntityId": to_id,
         "departDate": date_obj.strftime("%Y-%m-%d"),
-        "currency": "TWD",
-        "locale": "zh-TW",
-        "market": "TW"
+        "currency": "TWD", "locale": "zh-TW", "market": "TW"
     }
-    # 這裡必須保持正確縮排，且前後無雜質
-    time.sleep(1.5) 
+    # 強制等待 2 秒避開頻率限制
+    time.sleep(2.0) 
     return requests.get(url, headers=headers, params=params).json()
 
-# --- 3. 介面設計 ---
+# --- 3. 介面介面 ---
 st.title("𓃥 White 6 Aero Explorer")
 
 with st.sidebar:
-    st.header("🔍 地點智慧比對")
-    dest_query = st.text_input("輸入目的地 (例如: Prague 或 PRG)", value="Prague")
+    st.header("🔍 地點智慧提示")
+    # 使用者手動輸入後，按「搜尋城市」才觸發 API
+    city_input = st.text_input("輸入城市關鍵字 (如: Prag)", value="Prague")
     
-    loc_options = search_location(dest_query)
-    if loc_options:
+    if st.button("🔎 比對機場代碼"):
+        with st.spinner("比對中..."):
+            suggestions = get_location_suggestions(city_input)
+            st.session_state['loc_options'] = suggestions
+
+    # 如果有比對結果，顯示選單
+    if 'loc_options' in st.session_state and st.session_state['loc_options']:
         selection = st.selectbox(
-            "請選擇正確的機場地點",
-            options=loc_options,
+            "請確認目的地機場：",
+            options=st.session_state['loc_options'],
             format_func=lambda x: f"{x['presentation']['title']} ({x.get('iataCode', '無代碼')})"
         )
-        dest_id = selection['entityId']
-        st.success(f"已鎖定 ID: {dest_id}")
+        st.session_state['dest_id'] = selection['entityId']
+        st.success(f"已鎖定: {selection['presentation']['title']}")
     else:
-        dest_id = f"{dest_query}-sky"
-        st.warning("找不到比對，將使用預設格式")
+        st.session_state['dest_id'] = "PRG-sky"
 
     s2_date = st.date_input("飛歐洲日期", value=datetime(2026, 6, 10))
-    outstations_raw = st.multiselect("選擇外站", ["HKG", "KUL", "BKK", "SIN"], default=["HKG", "KUL"])
+    outstations = st.multiselect("外站比價", ["HKG", "KUL", "BKK", "SIN"], default=["HKG"])
 
-# --- 4. 執行邏輯 ---
-if st.button("🚀 執行全自動交叉比價"):
-    for station in outstations_raw:
-        st.subheader(f"📍 從 {station} 出發的方案")
-        
-        with st.spinner(f"正在分析 {station}..."):
-            station_results = search_location(station)
-            origin_id = station_results[0]['entityId'] if station_results else f"{station}-sky"
-            
-            # 目前以台北為基準搜尋 S2 航段
-            data = fetch_flight("TPE-sky", dest_id, s2_date)
-            
-            if data.get('status') == True:
-                items = data.get('itineraries', {}).get('buckets', [{}])[0].get('items', [])
-                if items:
-                    for flight in items[:3]:
-                        price = flight['price']['formatted']
-                        airline = flight['legs'][0]['carriers']['marketing'][0]['name']
-                        st.success(f"💰 {price} | {airline}")
+# --- 4. 執行比價 ---
+if st.button("🚀 啟動全自動交叉比價"):
+    if 'dest_id' not in st.session_state:
+        st.error("請先點擊『比對機場代碼』確認目的地。")
+    else:
+        for station in outstations:
+            st.subheader(f"📍 從 {station} 出發")
+            with st.spinner(f"正在搜尋 {station} 的最佳組合..."):
+                data = fetch_flight_safe("TPE-sky", st.session_state['dest_id'], s2_date)
+                
+                if data.get('status') == True:
+                    items = data.get('itineraries', {}).get('buckets', [{}])[0].get('items', [])
+                    if items:
+                        for flight in items[:2]:
+                            st.success(f"💰 {flight['price']['formatted']} | {flight['legs'][0]['carriers']['marketing'][0]['name']}")
+                    else:
+                        st.warning("此段無報價。")
+                elif data.get('message') == "Too many requests":
+                    st.error("🛑 頻率受限！請等待 1 分鐘後再試。建議申請 Amadeus API 作為備援。")
                 else:
-                    st.warning("⚠️ 該日期暫無報價。")
-            else:
-                error_msg = data.get('message', '請稍候再試')
-                st.error(f"❌ API 錯誤：{error_msg}")
-
-st.divider()
-st.caption("𓃥 White 6 Studio - 智慧比對功能已修正")
+                    st.error(f"錯誤：{data.get('message', 'API 暫時無法回應')}")
