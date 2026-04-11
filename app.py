@@ -1,44 +1,36 @@
-from duffel_api import Duffel
-from datetime import datetime, timedelta
+import streamlit as st
+import requests
 
-# 初始化 Duffel 客戶端
-# 建議將 token 放入 Streamlit 的 secrets.toml 中
-client = Duffel(access_token="你的_duffel_test_token")
+# 1. 配置 Secrets
+RAPID_API_KEY = st.secrets["RAPIDAPI_KEY"] # 在 Streamlit Cloud 的 Secrets 中設定
+RAPID_API_HOST = "skyscanner-flights-travel-api.p.rapidapi.com"
 
-def search_white6_four_segments(outstation, destination, s2_date_str):
-    """
-    outstation: 外站 (如 'HKG')
-    destination: 主目的地 (如 'PRG')
-    s2_date_str: 第二段出發日期 'YYYY-MM-DD'
-    """
+def search_flight_leg(origin, destination, date):
+    url = f"https://{RAPID_API_HOST}/v1/flights/search-onedate" # 範例 Endpoint
+    querystring = {
+        "fromEntityId": origin,
+        "toEntityId": destination,
+        "departDate": date,
+        "currency": "TWD",
+        "locale": "zh-TW"
+    }
+    headers = {
+        "X-RapidAPI-Key": RAPID_API_KEY,
+        "X-RapidAPI-Host": RAPID_API_HOST
+    }
     
-    # 邏輯計算日期
-    s2_date = datetime.strptime(s2_date_str, '%Y-%m-%d')
-    s1_date = (s2_date - timedelta(days=60)).strftime('%Y-%m-%d') # 提前兩個月
-    s3_date = (s2_date + timedelta(days=10)).strftime('%Y-%m-%d') # 玩 10 天
-    s4_date = (s2_date + timedelta(days=120)).strftime('%Y-%m-%d') # 四個月後飛最後一段
+    response = requests.get(url, headers=headers, params=querystring)
+    return response.json()
 
-    # 構建多段行程 (Multi-segment slices)
-    slices = [
-        {"origin": outstation, "destination": "TPE", "departure_date": s1_date},
-        {"origin": "TPE", "destination": destination, "departure_date": s2_date_str},
-        {"origin": destination, "destination": "TPE", "departure_date": s3_date},
-        {"origin": "TPE", "destination": outstation, "departure_date": s4_date}
-    ]
+# 2. White 6 UI 整合
+st.title("𓃥 White 6 Aero Explorer")
 
-    try:
-        # 1. 建立搜尋請求
-        search_request = client.offer_requests.create().volumes([
-            {"slices": slices, "passengers": [{"type": "adult"}]}
-        ]).execute()
-        
-        # 2. 獲取回傳的所有方案
-        offers = search_request.offers
-        
-        return offers
-    except Exception as e:
-        print(f"搜尋出錯: {e}")
-        return []
-
-# 測試調用
-# results = search_white6_four_segments("HKG", "PRG", "2026-06-10")
+# 假設搜尋第二段：台北 -> 布拉格
+if st.button("執行四段票比價"):
+    # 在這裡循環執行四次搜尋 (或一次 Multi-city，視 API 版本而定)
+    leg2_results = search_flight_leg("TPE", "PRG", "2026-06-10")
+    
+    if leg2_results:
+        st.success("成功獲取布拉格即時票價！")
+        # 這裡解析 JSON 並顯示價格
+        # st.write(leg2_results)
