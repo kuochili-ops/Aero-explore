@@ -1,36 +1,50 @@
 import streamlit as st
 import requests
+import pandas as pd
+from datetime import datetime, timedelta
 
-# 1. 配置 Secrets
-RAPID_API_KEY = st.secrets["RAPIDAPI_KEY"] # 在 Streamlit Cloud 的 Secrets 中設定
-RAPID_API_HOST = "skyscanner-flights-travel-api.p.rapidapi.com"
+# 設定頁面
+st.set_page_config(page_title="White 6 Aero Explorer", page_icon="𓃥")
+st.title("𓃥 White 6 Aero Explorer")
 
-def search_flight_leg(origin, destination, date):
-    url = f"https://{RAPID_API_HOST}/v1/flights/search-onedate" # 範例 Endpoint
-    querystring = {
+# 從 Secrets 讀取金鑰
+RAPID_API_KEY = st.secrets["RAPIDAPI_KEY"]
+HOST = "skyscanner-flights-travel-api.p.rapidapi.com"
+
+# --- 側邊欄設定 ---
+with st.sidebar:
+    st.header("行程設定")
+    dest = st.text_input("目的地機場", value="PRG")
+    s2_date = st.date_input("第二段出發日 (飛歐洲)", value=datetime(2026, 6, 10))
+    outstations = st.multiselect("選擇比價外站", ["HKG", "KUL", "BKK", "SIN"], default=["HKG", "KUL"])
+
+# --- 核心搜尋函式 ---
+def fetch_flight(origin, destination, date):
+    url = f"https://{HOST}/v1/flights/search-onedate"
+    params = {
         "fromEntityId": origin,
         "toEntityId": destination,
-        "departDate": date,
+        "departDate": date.strftime("%Y-%m-%d"),
         "currency": "TWD",
         "locale": "zh-TW"
     }
-    headers = {
-        "X-RapidAPI-Key": RAPID_API_KEY,
-        "X-RapidAPI-Host": RAPID_API_HOST
-    }
-    
-    response = requests.get(url, headers=headers, params=querystring)
-    return response.json()
+    headers = {"X-RapidAPI-Key": RAPID_API_KEY, "X-RapidAPI-Host": HOST}
+    res = requests.get(url, headers=headers, params=params)
+    return res.json()
 
-# 2. White 6 UI 整合
-st.title("𓃥 White 6 Aero Explorer")
-
-# 假設搜尋第二段：台北 -> 布拉格
-if st.button("執行四段票比價"):
-    # 在這裡循環執行四次搜尋 (或一次 Multi-city，視 API 版本而定)
-    leg2_results = search_flight_leg("TPE", "PRG", "2026-06-10")
-    
-    if leg2_results:
-        st.success("成功獲取布拉格即時票價！")
-        # 這裡解析 JSON 並顯示價格
-        # st.write(leg2_results)
+# --- 執行搜尋 ---
+if st.button("開始執行四段票交叉比價"):
+    for station in outstations:
+        st.subheader(f"📍 從 {station} 出發的方案")
+        with st.spinner(f"正在抓取 {station} 數據..."):
+            data = fetch_flight("TPE", dest, s2_date) # 這裡以 S2 為範例
+            
+            if data.get('status') and 'itineraries' in data:
+                # 只取前三個最便宜的方案
+                results = data['itineraries']['buckets'][0]['items'][:3]
+                for flight in results:
+                    price = flight['price']['formatted']
+                    airline = flight['legs'][0]['carriers']['marketing'][0]['name']
+                    st.info(f"💰 價格：{price} | 航空公司：{airline}")
+            else:
+                st.warning(f"暫時找不到從 {station} 出發的有效航線。")
