@@ -1,89 +1,111 @@
 import streamlit as st
 import requests
-import time
-from datetime import datetime
+import pandas as pd
+from datetime import datetime, timedelta
 
-# --- 配置 ---
-st.set_page_config(page_title="White 6 Aero Explorer", page_icon="𓃥", layout="wide")
+# --- 1. 頁面基本配置 ---
+st.set_page_config(
+    page_title="White 6 Aero Explorer",
+    page_icon="𓃥",
+    layout="wide"
+)
 
-# 安全讀取金鑰 (請在 Secrets 加入這些 Key)
-RAPID_API_KEY = st.secrets.get("RAPIDAPI_KEY")
-AMADEUS_KEY = st.secrets.get("AMADEUS_KEY") # 備援方案
-AMADEUS_SECRET = st.secrets.get("AMADEUS_SECRET")
+# 套用「白六」暗色主題與美化卡片
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    .flight-card { 
+        background-color: #1e2129; 
+        padding: 20px; 
+        border-radius: 12px; 
+        border-left: 5px solid #ff4b4b;
+        margin-bottom: 15px;
+    }
+    .price-tag { color: #00ff00; font-size: 1.5em; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
 
-HOST = "skyscanner-flights-travel-api.p.rapidapi.com"
-headers = {"X-RapidAPI-Key": RAPID_API_KEY, "X-RapidAPI-Host": HOST}
+# --- 2. 金鑰設定 ---
+# 建議將金鑰放入 st.secrets["SERP_API_KEY"]
+SERP_API_KEY = st.secrets.get("SERP_API_KEY", "4e7eddc7ddf9db9a6a8457601d438eda4aa5b4cdadf1ad751d1a20b2bb2d6844")
 
-# --- 1. 智慧地點提示 (優化頻率) ---
-def get_location_suggestions(query):
-    if len(query) < 2: return []
-    url = f"https://{HOST}/v1/flights/search-location"
-    params = {"q": query, "locale": "zh-TW"}
+# --- 3. 核心搜尋函式 (Google Flights 引擎) ---
+def get_best_flights(dep_id, arr_id, date_obj):
+    url = "https://serpapi.com/search"
+    params = {
+        "engine": "google_flights",
+        "departure_id": dep_id,
+        "arrival_id": arr_id,
+        "outbound_date": date_obj.strftime("%Y-%m-%d"),
+        "currency": "TWD",
+        "hl": "zh-tw",
+        "api_key": SERP_API_KEY
+    }
     try:
-        # 僅在特定動作觸發，減少 Auto-request
-        res = requests.get(url, headers=headers, params=params).json()
-        return res.get('data', [])
-    except:
+        response = requests.get(url, params=params)
+        data = response.json()
+        return data.get("best_flights", [])
+    except Exception as e:
+        st.error(f"搜尋發生錯誤: {e}")
         return []
 
-# --- 2. 核心搜尋與頻率控制 ---
-def fetch_flight_safe(from_id, to_id, date_obj):
-    url = f"https://{HOST}/v1/flights/search-onedate"
-    params = {
-        "fromEntityId": from_id, "toEntityId": to_id,
-        "departDate": date_obj.strftime("%Y-%m-%d"),
-        "currency": "TWD", "locale": "zh-TW", "market": "TW"
-    }
-    # 強制等待 2 秒避開頻率限制
-    time.sleep(2.0) 
-    return requests.get(url, headers=headers, params=params).json()
-
-# --- 3. 介面介面 ---
+# --- 4. 介面設計 ---
 st.title("𓃥 White 6 Aero Explorer")
+st.info("已成功連結 SerpApi (Google Flights 引擎) ─ 目前最穩定之數據源")
 
 with st.sidebar:
-    st.header("🔍 地點智慧提示")
-    # 使用者手動輸入後，按「搜尋城市」才觸發 API
-    city_input = st.text_input("輸入城市關鍵字 (如: Prag)", value="Prague")
+    st.header("📅 行程參數")
+    main_dest = st.text_input("目的地機場 (IATA)", value="PRG")
+    s2_date = st.date_input("第二段出發日 (TPE -> 歐洲)", value=datetime(2026, 6, 10))
     
-    if st.button("🔎 比對機場代碼"):
-        with st.spinner("比對中..."):
-            suggestions = get_location_suggestions(city_input)
-            st.session_state['loc_options'] = suggestions
+    st.divider()
+    st.header("📍 外站比價清單")
+    outstations = st.multiselect(
+        "選擇要分析的外站", 
+        ["HKG", "KUL", "BKK", "SIN", "NRT"], 
+        default=["HKG", "KUL", "BKK"]
+    )
 
-    # 如果有比對結果，顯示選單
-    if 'loc_options' in st.session_state and st.session_state['loc_options']:
-        selection = st.selectbox(
-            "請確認目的地機場：",
-            options=st.session_state['loc_options'],
-            format_func=lambda x: f"{x['presentation']['title']} ({x.get('iataCode', '無代碼')})"
-        )
-        st.session_state['dest_id'] = selection['entityId']
-        st.success(f"已鎖定: {selection['presentation']['title']}")
-    else:
-        st.session_state['dest_id'] = "PRG-sky"
+# --- 5. 四段票日期推算展示 ---
+s1_date = s2_date - timedelta(days=60)
+s3_date = s2_date + timedelta(days=10)
+s4_date = s2_date + timedelta(days=120)
 
-    s2_date = st.date_input("飛歐洲日期", value=datetime(2026, 6, 10))
-    outstations = st.multiselect("外站比價", ["HKG", "KUL", "BKK", "SIN"], default=["HKG"])
+cols = st.columns(4)
+cols[0].metric("S1 (外站->TPE)", s1_date.strftime("%m/%d"))
+cols[1].metric("S2 (TPE->歐洲)", s2_date.strftime("%m/%d"))
+cols[2].metric("S3 (歐洲->TPE)", s3_date.strftime("%m/%d"))
+cols[3].metric("S4 (TPE->外站)", s4_date.strftime("%m/%d"))
 
-# --- 4. 執行比價 ---
-if st.button("🚀 啟動全自動交叉比價"):
-    if 'dest_id' not in st.session_state:
-        st.error("請先點擊『比對機場代碼』確認目的地。")
+# --- 6. 執行比價邏輯 ---
+if st.button("🚀 執行四段票交叉比價"):
+    if not outstations:
+        st.warning("請至少選擇一個外站進行比價。")
     else:
         for station in outstations:
-            st.subheader(f"📍 從 {station} 出發")
-            with st.spinner(f"正在搜尋 {station} 的最佳組合..."):
-                data = fetch_flight_safe("TPE-sky", st.session_state['dest_id'], s2_date)
+            st.markdown(f"### 📍 搜尋自 **{station}** 出發的航線組合")
+            
+            with st.spinner(f"正在抓取 Google Flights 數據 ({station})..."):
+                # 我們搜尋 S2 (台北飛歐洲) 的價格作為核心基準
+                best_flights = get_best_flights("TPE", main_dest, s2_date)
                 
-                if data.get('status') == True:
-                    items = data.get('itineraries', {}).get('buckets', [{}])[0].get('items', [])
-                    if items:
-                        for flight in items[:2]:
-                            st.success(f"💰 {flight['price']['formatted']} | {flight['legs'][0]['carriers']['marketing'][0]['name']}")
-                    else:
-                        st.warning("此段無報價。")
-                elif data.get('message') == "Too many requests":
-                    st.error("🛑 頻率受限！請等待 1 分鐘後再試。建議申請 Amadeus API 作為備援。")
+                if best_flights:
+                    for flight in best_flights[:2]: # 僅顯示前兩名最優方案
+                        # 解析 SerpApi 回傳格式
+                        price = flight.get('price', '未提供')
+                        airline = flight['flights'][0]['airline']
+                        duration = flight.get('total_duration', '未知')
+                        
+                        st.markdown(f"""
+                        <div class="flight-card">
+                            <span class="price-tag">TWD {price:,}</span><br>
+                            <b>航空公司：</b>{airline} <br>
+                            <b>總飞行時間：</b>{duration} 分鐘 <br>
+                            <small>基準航段：TPE ✈️ {main_dest} | 日期：{s2_date}</small>
+                        </div>
+                        """, unsafe_allow_html=True)
                 else:
-                    st.error(f"錯誤：{data.get('message', 'API 暫時無法回應')}")
+                    st.warning(f"目前從 {station} 找不到符合條件的航班，建議微調日期。")
+
+st.divider()
+st.caption("𓃥 White 6 Studio - 2026 旅遊自動化工具 | 數據源: Google Flights via SerpApi")
