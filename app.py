@@ -3,11 +3,33 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 
-# --- 1. 基本配置 ---
+# --- 1. 頁面基本配置 ---
 st.set_page_config(page_title="White 6 Aero Explorer", page_icon="𓃥", layout="wide")
 SERP_API_KEY = st.secrets.get("SERP_API_KEY", "4e7eddc7ddf9db9a6a8457601d438eda4aa5b4cdadf1ad751d1a20b2bb2d6844")
 
-# --- 2. 核心搜尋函式 ---
+# --- 2. 靜態數據：目的地三級聯動資料庫 ---
+# 這裡定義常見的四段票熱門目的地，確保資料準確
+DESTINATIONS = {
+    "歐洲": {
+        "捷克": ["Prague (PRG)"],
+        "奧地利": ["Vienna (VIE)"],
+        "德國": ["Munich (MUC)", "Frankfurt (FRA)", "Berlin (BER)"],
+        "法國": ["Paris (CDG)"],
+        "義大利": ["Rome (FCO)", "Milan (MXP)"],
+        "荷蘭": ["Amsterdam (AMS)"],
+        "英國": ["London (LHR)"]
+    },
+    "美洲": {
+        "美國": ["Los Angeles (LAX)", "San Francisco (SFO)", "New York (JFK)"],
+        "加拿大": ["Vancouver (YVR)", "Toronto (YYZ)"]
+    },
+    "大洋洲": {
+        "澳洲": ["Sydney (SYD)", "Melbourne (MEL)"],
+        "紐西蘭": ["Auckland (AKL)"]
+    }
+}
+
+# --- 3. 核心搜尋功能 ---
 def search_flights(dep, arr, date_obj):
     url = "https://serpapi.com/search"
     params = {
@@ -24,91 +46,86 @@ def search_flights(dep, arr, date_obj):
         return (res.get("best_flights", []) + res.get("other_flights", []))[:1]
     except: return []
 
-# --- 3. 介面設計：極簡設定與功能開關 ---
+# --- 4. 介面設計：三級聯動選單 ---
 st.title("𓃥 White 6 Aero Explorer")
-st.subheader("31天廣域掃描 + Open Jaw 實戰系統")
+st.subheader("正規四段票：全球外站 + +/-15天範圍掃描")
 
-col1, col2, col3 = st.columns([2, 2, 1])
-with col1:
-    dest_q = st.text_input("🎯 目的地 (例如: Prague)", value="Prague")
-with col2:
-    base_date = st.date_input("📅 預估 S2 出發日期", value=datetime.today().date() + timedelta(days=61))
-with col3:
-    allow_oj = st.toggle("開啟 Open Jaw", value=False)
+with st.sidebar:
+    st.header("📍 目的地選擇")
+    # 洲、國、城市聯動
+    continent = st.selectbox("1. 選擇大洲", list(DESTINATIONS.keys()))
+    country = st.selectbox("2. 選擇國家", list(DESTINATIONS[continent].keys()))
+    city_full = st.selectbox("3. 選擇城市", DESTINATIONS[continent][country])
+    dest_iata = city_full.split("(")[1].split(")")[0]
+    
+    st.divider()
+    st.header("📅 日期與規則")
+    base_date = st.date_input("預估 S2 出發日期", value=datetime.today().date() + timedelta(days=61))
+    accept_oj = st.checkbox("接受 Open Jaw (自動比對鄰近城市)", value=True)
 
-if allow_oj:
-    oj_dest = st.text_input("🔄 Open Jaw 回程起點 (例如: Vienna)", value="Vienna")
-else:
-    oj_dest = dest_q
-
-# --- 4. 核心邏輯：自動生成日期與外站清單 ---
-if st.button("🚀 執行全球外站 + 31天範圍深度掃描"):
-    # 設定外站清單 (涵蓋中國、日韓、東南亞)
+# --- 5. 執行廣域掃描 ---
+if st.button("🚀 啟動全自動深度掃描 (含 Open Jaw 比對)"):
+    # 設定外站 (中國、日本、東南亞)
     stations = ["PVG", "HKG", "KUL", "NRT", "BKK", "SIN", "ICN"]
     
-    # 生成前後 15 天日期範圍 (共 31 天)
-    date_range = [base_date + timedelta(days=x) for x in range(-15, 16)]
+    # 掃描日期範圍 (+/- 15天，為節省 API 額度建議實戰時改為精確範圍)
+    date_range = [base_date + timedelta(days=x) for x in range(-15, 16, 3)] # 範例採每3天一點以示範
     
+    # 如果接受 Open Jaw，定義該國/區域的鄰近機場作為比對項
+    search_targets = [dest_iata]
+    if accept_oj:
+        # 自動加入同國家其他機場作為 Open Jaw 潛在點
+        other_cities = [c.split("(")[1].split(")")[0] for c in DESTINATIONS[continent][country] if dest_iata not in c]
+        search_targets.extend(other_cities)
+
     all_results = []
-    tpe_hub = "TPE"
-    
-    # 建立進度條
-    total_steps = len(stations) * len(date_range)
     bar = st.progress(0)
-    status_text = st.empty()
     
+    total = len(stations) * len(date_range) * len(search_targets)
     count = 0
+
     for stn in stations:
         for d in date_range:
-            count += 1
-            # 確保 S1 晚於今日 (航空公司硬規則)
-            if d - timedelta(days=60) <= datetime.today().date():
-                continue
+            for target in search_targets:
+                count += 1
+                if d - timedelta(days=60) <= datetime.today().date(): continue
                 
-            status_text.text(f"掃描中：外站 {stn} | 日期 {d} ({count}/{total_steps})")
-            bar.progress(count / total_steps)
-            
-            # 搜尋核心 S2 (台北-去程目的地)
-            res = search_flights(tpe_hub, dest_q, d)
-            
-            if res:
-                f = res[0]
-                all_results.append({
-                    "價格 (TWD)": f.get('price', 0),
-                    "啟動外站": stn,
-                    "出發日期 (S2)": d,
-                    "航空公司": f['flights'][0]['airline'],
-                    "進出模式": f"{dest_q} 進 / {oj_dest} 出" if allow_oj else "同點進出",
-                    "S1 (啟動日)": d - timedelta(days=60),
-                    "S4 (結尾日)": d + timedelta(days=120)
-                })
+                bar.progress(count / total)
+                res = search_flights("TPE", target, d)
+                
+                if res:
+                    f = res[0]
+                    mode = "同點進出" if target == dest_iata else f"Open Jaw ({target})"
+                    all_results.append({
+                        "價格 (TWD)": f.get('price', 0),
+                        "啟動外站": stn,
+                        "出發日期 (S2)": d,
+                        "航空公司": f['flights'][0]['airline'],
+                        "進出模式": mode,
+                        "S1 (啟動)": d - timedelta(days=60),
+                        "S4 (結尾)": d + timedelta(days=120)
+                    })
 
-    # --- 5. 結果呈現與排序 ---
+    # --- 6. 結果呈現與排序 ---
     if all_results:
         df = pd.DataFrame(all_results)
-        st.success(f"✅ 掃描完成！共找到 {len(all_results)} 組符合條件的四段票方案。")
+        st.success(f"✅ 掃描完成！已自動比對 {dest_iata} 周邊航點。請點擊表頭排序。")
         
-        # 顯示可排序表格
         st.dataframe(
             df.sort_values(by="價格 (TWD)"), 
             use_container_width=True,
-            column_config={
-                "價格 (TWD)": st.column_config.NumberColumn(format="TWD %d"),
-                "出發日期 (S2)": st.column_config.DateColumn(format="YYYY-MM-DD")
-            }
+            column_config={"價格 (TWD)": st.column_config.NumberColumn(format="TWD %d")}
         )
 
-        # 航空公司要件註記
-        st.subheader("📋 航空公司四段票要件註記 (實戰版)")
+        st.subheader("📝 四段票航空公司開票要件註記")
         st.info(f"""
-        **【開票核心要件】**
-        - **日期範圍**：已自動掃描 {base_date} 前後 15 天，上方列表已按價格排序。
-        - **Open Jaw 規則**：{'已啟用' if allow_oj else '未啟用'}。回程時航空公司允許「開口」，但行李仍需註記取回。
-        - **外站要件**：S1 必須在指定日期從外站飛抵台灣以「激活」整張票。
-        - **證件提醒**：若外站位於中國 (PVG)，務必檢查台胞證效期。
+        **【實戰要件】**
+        - **Open Jaw 判定**：列表若出現 'Open Jaw'，表示回程從同國鄰近機場出發價格更優。
+        - **S1 啟動要件**：必須在 S1 日期從外站 ({df.iloc[0]['啟動外站']}) 飛抵台灣，機票才生效。
+        - **行李要件**：S3 返回台灣時，務必要求「行李不直掛外站」。
         """)
     else:
-        st.error("掃描範圍內未發現有效報價。請確認目的地代碼或嘗試更遠的日期。")
+        st.error("掃描範圍內未發現有效報價。")
 
 st.divider()
-st.caption("𓃥 White 6 Studio | 2026 航空自動化比價 | 支持 +/- 15 天深度掃描")
+st.caption("𓃥 White 6 Studio | 三級聯動目的地系統 | 2026 航空自動化旗艦版")
