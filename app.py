@@ -3,21 +3,12 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 
-# --- 1. 頁面配置 ---
+# --- 1. 基本配置 ---
 st.set_page_config(page_title="White 6 Aero Explorer", page_icon="𓃥", layout="wide")
-
 SERP_API_KEY = st.secrets.get("SERP_API_KEY", "4e7eddc7ddf9db9a6a8457601d438eda4aa5b4cdadf1ad751d1a20b2bb2d6844")
 
-# --- 2. 核心搜尋與提示功能 ---
-
-def get_location_suggestions(query):
-    if len(query) < 1: return []
-    url = f"https://autocomplete.travelpayouts.com/places2?term={query}&locale=en&types[]=airport&types[]=city"
-    try:
-        return requests.get(url).json()
-    except: return []
-
-def search_google_flights(dep, arr, date_obj):
+# --- 2. 搜尋函式 ---
+def search_flights(dep, arr, date_obj):
     url = "https://serpapi.com/search"
     params = {
         "engine": "google_flights",
@@ -33,87 +24,79 @@ def search_google_flights(dep, arr, date_obj):
         return (res.get("best_flights", []) + res.get("other_flights", []))[:1]
     except: return []
 
-# --- 3. 側邊欄：Open-Jaw 與四段規則設定 ---
-
-with st.sidebar:
-    st.header("📍 台灣 Hub 與外站")
-    tpe_hub = st.selectbox("台灣機場", ["TPE", "TSA", "KHH", "RMQ"], index=0)
-    
-    station_q = st.text_input("輸入啟動外站 (如: KUL)", value="KUL")
-    s_hints = get_location_suggestions(station_q)
-    station_iata = st.selectbox("確認外站：", options=s_hints, format_func=lambda x: f"{x['name']} ({x['code']})")['code'] if s_hints else station_q.upper()
-
-    st.divider()
-    st.header("✈️ Open-Jaw 航點設定")
-    
-    # 去程目的地 (S2)
-    s2_q = st.text_input("去程目的地 (S2 Arrival)", value="Prague")
-    s2_hints = get_location_suggestions(s2_q)
-    s2_dest = st.selectbox("確認 S2 目的地：", options=s2_hints, format_func=lambda x: f"{x['name']} ({x['code']})")['code'] if s2_hints else "PRG"
-    
-    # 回程起點 (S3) - 實作 Open-Jaw
-    st.markdown("**[Open-Jaw 選項]**")
-    s3_q = st.text_input("回程出發地 (S3 Departure)", value="Vienna")
-    s3_hints = get_location_suggestions(s3_q)
-    s3_org = st.selectbox("確認 S3 起點：", options=s3_hints, format_func=lambda x: f"{x['name']} ({x['code']})")['code'] if s3_hints else s2_dest
-
-    st.divider()
-    st.header("📅 期望日期範圍 (S2)")
-    today = datetime.today().date()
-    start_s2 = st.date_input("S2 開始日", value=today + timedelta(days=61), min_value=today + timedelta(days=2))
-    end_s2 = st.date_input("S2 結束日", value=start_s2 + timedelta(days=3))
-
-# --- 4. 主畫面：Open-Jaw 規則呈現 ---
-
+# --- 3. 介面設計 ---
 st.title("𓃥 White 6 Aero Explorer")
+st.subheader("正規四段票全自動掃描 (涵蓋中國、日本、東南亞)")
 
-is_open_jaw = s2_dest != s3_org
-oj_status = "✅ 已啟動 Open-Jaw" if is_open_jaw else "標準來回"
-st.subheader(f"正規四段票架構 - {oj_status}")
+col1, col2 = st.columns(2)
+with col1:
+    dest_q = st.text_input("🎯 輸入長程目的地 (如: Prague)", value="Prague")
+with col2:
+    today = datetime.today().date()
+    s2_date = st.date_input("📅 預計 S2 出發日期", value=today + timedelta(days=61), min_value=today + timedelta(days=61))
 
-# 預覽四段結構
-s1_d, s2_d, s3_d, s4_d = start_s2-timedelta(days=60), start_s2, start_s2+timedelta(days=10), start_s2+timedelta(days=120)
-
-st.code(f"""
-[四段票 Open-Jaw 航程註記]
-1st: {station_iata} ➔ {tpe_hub} | {s1_d}
-2nd: {tpe_hub} ➔ {s2_dest} | {s2_d} (去程進)
-3rd: {s3_org} ➔ {tpe_hub} | {s3_d} (回程出 - Open Jaw: {is_open_jaw})
-4th: {tpe_hub} ➔ {station_iata} | {s4_d}
-""", language="markdown")
-
-# --- 5. 執行搜尋與比價 ---
-
-if st.button("🚀 執行 Open-Jaw 全自動比價"):
-    s2_dates = [start_s2 + timedelta(days=x) for x in range((end_s2 - start_s2).days + 1)]
-    final_results = []
+# --- 4. 核心邏輯：全自動掃描 ---
+if st.button("🚀 執行全外站自動掃描並排序"):
+    # 自動遍歷所有外站區域
+    scan_list = {
+        "中國": ["PVG", "PEK", "CAN", "SZX", "XMN"], # 上海、北京、廣州、深圳、廈門
+        "日本/韓國": ["NRT", "KIX", "ICN"],
+        "東南亞": ["KUL", "BKK", "SIN", "HKG"]
+    }
     
-    for d in s2_dates:
-        with st.spinner(f"分析日期 {d}..."):
-            # 在 Open-Jaw 模式下，價格通常以去程 S2 價格為主要浮動參考
-            res = search_google_flights(tpe_hub, s2_dest, d)
-            if res:
-                f = res[0]
-                final_results.append({
-                    "S2 出發日期": d,
-                    "航空公司": f['flights'][0]['airline'],
-                    "S2 價格 (去程)": f.get('price', 0),
-                    "Open-Jaw 航點": f"{s2_dest} 進 / {s3_org} 出",
-                    "S1 (外站回台)": d - timedelta(days=60),
-                    "S3 (歐洲回台)": d + timedelta(days=10),
-                    "S4 (送回外站)": d + timedelta(days=120)
-                })
+    tpe_hub = "TPE"
+    all_data = []
+    
+    # 日期計算
+    s1_d, s3_d, s4_d = s2_date-timedelta(days=60), s2_date+timedelta(days=10), s2_date+timedelta(days=120)
 
-    if final_results:
-        df = pd.DataFrame(final_results)
-        st.subheader("📊 交叉比對矩陣")
+    # 執行掃描
+    stations = [item for sublist in scan_list.values() for item in sublist]
+    bar = st.progress(0)
+    
+    for i, stn in enumerate(stations):
+        with st.spinner(f"正在分析外站：{stn}..."):
+            # 搜尋 S2 段價格
+            results = search_flights(tpe_hub, dest_q, s2_date)
+            
+            if results:
+                f = results[0]
+                all_data.append({
+                    "價格 (TWD)": f.get('price', 0),
+                    "啟動外站": stn,
+                    "航空公司": f['flights'][0]['airline'],
+                    "S1 (啟動)": s1_d,
+                    "S2 (長程)": s2_date,
+                    "S3 (回程)": s3_d,
+                    "S4 (結尾)": s4_d,
+                    "地區": [k for k, v in scan_list.items() if stn in v][0]
+                })
+        bar.progress((i + 1) / len(stations))
+
+    # --- 5. 結果呈現與排序 ---
+    if all_data:
+        df = pd.DataFrame(all_data)
+        st.success("✅ 掃描完成！請點擊下表欄位標題進行排序。")
+        
+        # 顯示可排序表格
         st.dataframe(
-            df.sort_values("S2 價格 (去程)").style.highlight_min(subset=['S2 價格 (去程)'], color='#1b5e20'),
-            use_container_width=True
+            df.sort_values(by="價格 (TWD)"), 
+            use_container_width=True,
+            column_config={
+                "價格 (TWD)": st.column_config.NumberColumn(format="TWD %d"),
+            }
         )
-        st.success(f"✅ 比對完成。已將 {s2_dest} 與 {s3_org} 的不同點進出邏輯納入註記。")
+
+        st.subheader("📝 四段票航空公司開票要件 (中國外站版)")
+        st.info(f"""
+        **【實戰要件註記】**
+        - **證件要件**：若外站設在中國大陸 (如上海 PVG)，S1 與 S4 段需準備有效之**台胞證**。
+        - **航向規則**：機票必須由「外站」發出，經台灣中停後飛往長程目的地。
+        - **行李要件**：回程 (S3) 返抵 {tpe_hub} 時，務必向地勤確認行李「不直掛」至外站。
+        - **開票檢查**：S1 啟動日 ({s1_d}) 絕對不可早於今日。
+        """)
     else:
-        st.error("此範圍內無數據。")
+        st.error("搜尋未果，請嘗試調整日期或確認目的地名稱。")
 
 st.divider()
-st.caption("𓃥 White 6 Studio | 支持 Open-Jaw 不同點進出 | 航空公司規則：S1 > 今天")
+st.caption("𓃥 White 6 Studio | 全球外站掃描系統 | 支持中國一線城市 Hub 比價")
