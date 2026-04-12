@@ -1,57 +1,35 @@
-import streamlit as st
-import pandas as pd
-from datetime import datetime, timedelta
-
-# --- 1. 目的地數據庫 (依據您的要求擴大至全球) ---
-GLOBAL_DEST = {
+# --- 目的地三級聯動資料庫 (2026 實戰擴充版) ---
+GLOBAL_DESTINATIONS = {
+    "亞洲 (長程/熱門)": {
+        "日本": ["東京/成田 (NRT)", "東京/羽田 (HND)", "大阪 (KIX)", "福岡 (FUK)", "札幌 (CTS)", "仙台 (SDJ)", "名古屋 (NGO)"],
+        "韓國": ["首爾/仁川 (ICN)", "首爾/金浦 (GMP)", "釜山 (PUS)", "濟州 (CJU)"],
+        "中國": ["上海/浦東 (PVG)", "北京/大興 (PKX)", "北京/首都 (PEK)", "廣州 (CAN)", "深圳 (SZX)", "成都 (TFU)", "杭州 (HGH)", "南京 (NKG)", "青島 (TAO)"],
+        "泰國": ["曼谷 (BKK)", "清邁 (CNX)", "普吉島 (HKT)", "蘇美島 (USM)"],
+        "越南": ["胡志明市 (SGN)", "河內 (HAN)", "峴港 (DAD)"],
+        "東南亞其他": ["新加坡 (SIN)", "吉隆坡 (KUL)", "馬尼拉 (MNL)", "雅加達 (CGK)"],
+        "西亞/中東": ["杜拜 (DXB)", "阿布達比 (AUH)", "多哈 (DOH)", "伊斯坦堡 (IST)"]
+    },
     "歐洲": {
-        "捷克": ["布拉格 (PRG)"], "奧地利": ["維也納 (VIE)"], 
-        "德國": ["慕尼黑 (MUC)", "法蘭克福 (FRA)"], "法國": ["巴黎 (CDG)"]
+        "捷克/奧地利": ["布拉格 (PRG)", "維也納 (VIE)"],
+        "德國": ["慕尼黑 (MUC)", "法蘭克福 (FRA)", "柏林 (BER)", "漢堡 (HAM)"],
+        "法國": ["巴黎 (CDG)", "里昂 (LYS)", "馬賽 (MRS)"],
+        "英國": ["倫敦 (LHR)", "倫敦 (LGW)", "曼徹斯特 (MAN)", "愛丁堡 (EDI)"],
+        "義大利": ["羅馬 (FCO)", "米蘭 (MXP)", "威尼斯 (VCE)", "佛羅倫薩 (FLR)"],
+        "瑞士/荷比盧": ["蘇黎世 (ZRH)", "日內瓦 (GVA)", "阿姆斯特丹 (AMS)", "布魯塞爾 (BRU)"],
+        "西班牙/葡萄牙": ["馬德里 (MAD)", "巴塞隆納 (BCN)", "里斯本 (LIS)"],
+        "北歐": ["赫爾辛基 (HEL)", "斯德哥爾摩 (ARN)", "哥本哈根 (CPH)", "奧斯陸 (OSL)"]
     },
     "北美洲": {
-        "美國": ["洛杉磯 (LAX)", "紐約 (JFK)", "西雅圖 (SEA)"],
-        "加拿大": ["溫哥華 (YVR)", "多倫多 (YYZ)"]
+        "美國西岸": ["洛杉磯 (LAX)", "舊金山 (SFO)", "西雅圖 (SEA)", "拉斯維加斯 (LAS)"],
+        "美國東岸/中部": ["紐約 (JFK)", "紐約 (EWR)", "芝加哥 (ORD)", "波士頓 (BOS)", "華盛頓 (IAD)", "亞特蘭大 (ATL)"],
+        "加拿大": ["溫哥華 (YVR)", "多倫多 (YYZ)", "蒙特婁 (YUL)", "卡加利 (YYC)"]
     },
     "大洋洲": {
-        "澳洲": ["悉尼 (SYD)", "墨爾本 (MEL)"], "紐西蘭": ["奧克蘭 (AKL)"]
+        "澳洲": ["悉尼 (SYD)", "墨爾本 (MEL)", "布里斯本 (BNE)", "珀斯 (PER)"],
+        "紐西蘭": ["奧克蘭 (AKL)", "基督城 (CHC)", "皇后鎮 (ZQN)"]
     },
-    "亞洲/非洲/美洲": {
-        "阿聯酋": ["杜拜 (DXB)"], "埃及": ["開羅 (CAI)"], "巴西": ["聖保羅 (GRU)"]
+    "中南美洲/非洲": {
+        "中南美": ["聖保羅 (GRU)", "布宜諾斯艾利斯 (EZE)", "利馬 (LIM)", "墨西哥城 (MEX)"],
+        "非洲": ["開羅 (CAI)", "約翰尼斯堡 (JNB)", "卡薩布蘭卡 (CMN)", "奈洛比 (NBO)"]
     }
 }
-
-# --- 2. 側邊欄介面 (確保設定永遠存在) ---
-with st.sidebar:
-    st.title("𓃥 White 6 目的地設定")
-    
-    # 三級聯動選擇 (您的核心要求)
-    selected_continent = st.selectbox("1. 選擇大洲", list(GLOBAL_DEST.keys()))
-    selected_country = st.selectbox("2. 選擇國家", list(GLOBAL_DEST[selected_continent].keys()))
-    selected_city_full = st.selectbox("3. 選擇城市", GLOBAL_DEST[selected_continent][selected_country])
-    
-    dest_iata = selected_city_full.split("(")[1].split(")")[0]
-    
-    st.divider()
-    base_date = st.date_input("預估 S2 出發日期", value=datetime.today().date() + timedelta(days=90))
-    
-    # 增加排除廉航開關 (避免您 CSV 中出現的 Jetstar 錯誤價格)
-    exclude_lcc = st.toggle("僅顯示傳統航空 (排除廉航)", value=True)
-    
-    if st.button("🚀 執行全球外站全自動掃描"):
-        st.session_state.searching = True
-
-# --- 3. 結果呈現區域 ---
-if st.session_state.get('searching'):
-    st.header(f"📊 {selected_city_full} 四段票搜尋結果")
-    
-    # 這裡會產出表格，欄位包含：
-    # [啟動城市 (外站)] [價格] [S2/S3 艙等] [航空公司] [進出模式]
-    
-    # 註記說明 (依據您的 2026 實戰指南)
-    st.info(f"""
-    **目的地確認**：您選擇的是 **{selected_city_full}**。
-    **Open Jaw 策略**：系統已自動偵測 {selected_country} 內其他航點。
-    **艙等提醒**：請觀察列表中的『S2/S3 實得艙等』，商務艙與經濟艙價格差若在 2 萬內，建議直攻商務。
-    """)
-else:
-    st.write("👈 請在左側選單設定目的地。系統將自動遍歷全球外站並比對前後 15 天報價。")
