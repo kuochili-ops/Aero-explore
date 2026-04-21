@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 
-# --- 1. [資料庫] 全球航點 ---
+# --- 1. [資料庫] 全球航點 (含日本與加拿大) ---
 WORLD_DATABASE = {
     "歐洲": {
         "中東歐": ["布拉格 (PRG)", "維也納 (VIE)", "布達佩斯 (BUD)", "華沙 (WAW)", "伊斯坦堡 (IST)"],
@@ -15,12 +15,11 @@ WORLD_DATABASE = {
         "中南美": ["墨西哥城 (MEX)", "聖保羅 (GRU)", "利馬 (LIM)"]
     },
     "亞洲/日本": {
-        "日本全航點": ["東京成田 (NRT)", "東京羽田 (HND)", "大阪關西 (KIX)", "名古屋 (NGO)", "福岡 (FUK)", "札幌 (CTS)"],
+        "日本全航點": ["東京 (NRT/HND)", "大阪 (KIX)", "名古屋 (NGO)", "福岡 (FUK)", "札幌 (CTS)"],
         "東南亞/亞洲樞紐": ["曼谷 (BKK)", "吉隆坡 (KUL)", "新加坡 (SIN)", "上海 (PVG)", "香港 (HKG)"]
     }
 }
 
-# 狀態管理
 if 'searched' not in st.session_state:
     st.session_state.searched = False
 
@@ -37,8 +36,8 @@ with st.sidebar:
     st.header("💺 2. 艙等配置")
     cabin_config = st.radio(
         "選擇航段艙等",
-        ["全行程經濟艙 (V/W 艙)", "S3+S4 升等商務艙 (D/Z 艙)"],
-        help="選擇 S3+S4 商務艙後，回台長程段與最後一段回外站將配置商務艙位。"
+        ["全行程經濟艙 (V/W 艙)", "S2+S3 核心段商務艙 (D/Z 艙)"],
+        help="選擇 S2+S3 商務艙後，台灣出發的長程段將配置商務艙位，S1/S4 則維持經濟艙。"
     )
 
     st.header("📅 3. 核心大旅行日期")
@@ -59,52 +58,49 @@ if not st.session_state.searched:
     
     st.markdown("""
     ---
-    ### 💡 為什麼要選擇 S3/S4 商務艙？
-    * **長途飛行的救贖**：在假期的最後，從歐洲、美洲飛回台灣（S3）時，能有全平躺座椅休息，能讓您回國後直接無縫接軌上班。
-    * **極致性價比**：四段票的「商務艙」價格往往僅需 6-8 萬，比直接購買來回經濟艙（5 萬多）更有感升級。
-    * **行李與貴賓室**：享有更高的行李額度，且 S4 飛往外站時可再次享受商務艙待遇。
+    ### 💡 什麼是「S2+S3 核心段商務艙」？
+    這是最受商務旅客歡迎的配置方式。將預算花在刀口上：
+    * **去回程（S2/S3）**：通常是長達 10-15 小時的跨洲航線，選擇商務艙可使用平躺睡床，徹底解決時差問題。
+    * **啟動與結尾（S1/S4）**：屬於 3-5 小時內的短程接駁，維持經濟艙以壓低整張票的總價。
 
-    ### 四段結構回顧：
-    1. **S1 (外站➔台)**：經濟艙啟動。
-    2. **S2 (台➔國外)**：假期去程。
-    3. **S3 (國外➔台)**：**[可選商務]** 假期回程，長途飛行最需要舒適度。
-    4. **S4 (台➔外站)**：**[可選商務]** 結尾段，延續尊榮感。
+    ### 四段結構配置：
+    1. **S1 (外站➔台)**：經濟艙 (艙位決定價格起點)。
+    2. **S2 (台➔國外)**：**[商務艙]** 假期開始，享受貴賓室與平躺飛行。
+    3. **S3 (國外➔台)**：**[商務艙]** 假期結束，舒適回台無縫接軌生活。
+    4. **S4 (台➔外站)**：經濟艙。
     """)
     
 # B. 搜尋結果畫面
 else:
-    st.title(f"📊 {target} 行程分析報告 ({'混合艙位' if '商務' in cabin_config else '全經濟'})")
+    st.title(f"📊 {target} 行程分析報告 ({'長程商務' if '商務' in cabin_config else '全經濟'})")
     
     s1_suggested = s2_core - timedelta(days=47)
     s4_suggested = s1_suggested + timedelta(days=330)
 
     # 比價數據
     hubs = ["KUL (吉隆坡)", "BKK (曼谷)", "PVG (上海)", "HKG (香港)", "NRT (東京)"]
-    airlines = ["長榮 (BR)", "華航 (CI)"]
     res = []
-    
     is_biz = "商務" in cabin_config
     
-    for air in airlines:
+    for air in ["長榮 (BR)", "華航 (CI)"]:
         for hub in hubs:
             h_iata = hub.split("(")[1].split(")")[0]
             for tw_iata in ["TPE", "KHH"]:
-                for d2 in [s2_core]:
-                    for d3 in [s3_core]:
-                        # 模擬加價邏輯：商務艙加價 2.5w - 4w 不等
-                        base_price = 33500 if "歐洲" in continent else 38000
-                        if is_biz: base_price += 28000 
-                        
-                        res.append({
-                            "航空公司": air, "外站樞紐": hub, "台灣機場": tw_iata,
-                            "S1-S2 艙等": "經濟 (V/W)",
-                            "S3-S4 艙等": "商務 (D/Z)" if is_biz else "經濟 (V/W)",
-                            "S1 啟動": f"{h_iata}➔{tw_iata}",
-                            "S3 回台": f"{dest_iata}➔{tw_iata}",
-                            "預估總價": base_price
-                        })
+                # 模擬加價邏輯
+                base_price = 33500 if "歐洲" in continent else 38000
+                if is_biz: base_price += 45000 # 長程商務加價較高
+                
+                res.append({
+                    "航空公司": air, "外站樞紐": hub, "台灣機場": tw_iata,
+                    "S1/S4 艙等": "經濟 (V/W)",
+                    "S2/S3 艙等": "商務 (D/Z)" if is_biz else "經濟 (V/W)",
+                    "S1路徑": f"{h_iata}➔{tw_iata}",
+                    "S2路徑": f"{tw_iata}➔{dest_iata}",
+                    "預估總價": base_price
+                })
 
     df = pd.DataFrame(res).sort_values("預估總價")
+    st.subheader("🔍 最佳路徑與航空公司比價清單")
     st.dataframe(df, use_container_width=True)
 
     # 官網實戰指引
@@ -113,11 +109,15 @@ else:
     top = df.iloc[0]
     st.error(f"請在 **{top['航空公司']}** 官網搜尋時，分別為各段選擇正確艙等：")
     
-    col1, col2 = st.columns(2)
-    col1.metric("S1 & S2 (選經濟艙)", "建議日期", str(s1_suggested))
-    col2.metric("S3 & S4 (選商務艙)" if is_biz else "S3 & S4 (選經濟艙)", "建議日期", str(s4_suggested))
+    row1_a, row1_b = st.columns(2)
+    row1_a.metric("S1 (經濟艙)", top['S1路徑'], str(s1_suggested))
+    row1_b.metric("S2 (商務艙)" if is_biz else "S2 (經濟艙)", f"{top['台灣機場']}➔{dest_iata}", str(s2_core))
+    
+    row2_a, row2_b = st.columns(2)
+    row2_a.metric("S3 (商務艙)" if is_biz else "S3 (經濟艙)", f"{dest_iata}➔{top['台灣機場']}", str(s3_core))
+    row2_b.metric("S4 (經濟艙)", f"{top['台灣機場']}➔{top['外站樞紐'].split('(')[1][:3]}", str(s4_suggested))
 
-    st.info("💡 **小撇步**：在官網搜尋時，若某段商務艙價格異常高，請嘗試更換 S1 或 S4 的日期以觸發 D/Z 艙特惠位。")
+    st.info("💡 **注意**：S2/S3 改選商務艙後，總價會從 3 萬多跳至 7-8 萬。這依然比直接買單純來回商務艙（通常要 12 萬+）便宜非常多！")
     
     if st.button("⬅️ 返回操作解說"):
         st.session_state.searched = False
